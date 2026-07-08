@@ -1,0 +1,98 @@
+---
+output: github_document
+---
+
+<!-- README.md is generated from README.Rmd. Please edit that file -->
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+# anvltcc
+
+`anvltcc` compiles [anvl](https://github.com/r-xla/anvl) traced array
+programs to C kernels through
+[tccquickr](https://github.com/sounkou-bioinfo/tccquickr) and the TinyCC
+just-in-time compiler from
+[Rtinycc](https://github.com/sounkou-bioinfo/Rtinycc). It is a
+millisecond-latency CPU compile path for anvl programs with no XLA
+dependency: TinyCC compiles the emitted kernel in-process, so the
+trace-to-callable round trip suits development loops and environments
+where the PJRT/XLA toolchain is unavailable.
+
+The bridge works because anvl's quickr backend already lowers graphs to
+declared R — `declare(type(...))` — which is exactly tccquickr's input
+dialect. `anvltcc` reuses anvl's own quickr lowering rules wherever they
+emit code inside tccquickr's declared subset, and registers bridge-owned
+`tinycc` rules for the primitives that have a native tccquickr surface
+form: `dot_general` with the standard contraction becomes a `%*%`
+contraction nest, and aval-checked broadcasts pass through to tccquickr's
+typed scalar-broadcast and recycle accesses.
+
+## From an anvl trace to a running C kernel
+
+```{r trace}
+library(anvltcc)
+
+sigmoid_matmul <- function(x, w) {
+  1 / (1 + anvl::nv_exp(-anvl::nv_matmul(x, w)))
+}
+x <- matrix(c(1, 2, 3, 4, 5, 6), nrow = 2)
+w <- matrix(c(0.5, -1, 2, 1, 0, 1), nrow = 3)
+```
+
+The traced graph lowers to declared R (anvl's rules plus the bridge's
+`tinycc` rules), which is also plain R:
+
+```{r lowered}
+graph <- anvl::trace_fn(sigmoid_matmul, args = list(
+  x = anvl::nv_array(x, backend = "plain"),
+  w = anvl::nv_array(w, backend = "plain")
+))
+lowered <- graph_to_tinycc_r_function(graph)
+lowered
+all.equal(as.numeric(lowered(x, w)), as.numeric(1 / (1 + exp(-(x %*% w)))))
+```
+
+tccquickr plans the loop nests and emits the C kernel:
+
+```{r source}
+cat(tinycc_source(sigmoid_matmul, x = x, w = w))
+```
+
+TinyCC compiles it in-process, and the callable agrees with R:
+
+```{r jit}
+kernel <- tinycc_jit(sigmoid_matmul, x = x, w = w)
+all.equal(as.numeric(kernel(x, w)), as.numeric(1 / (1 + exp(-(x %*% w)))))
+```
+
+## What is covered
+
+- Elementwise primitives, scalar broadcast, and reductions, through anvl's
+  own quickr rules.
+- `dot_general` with no batch dimensions and the standard `(2, 1)`
+  contraction, through the bridge's `%*%` rule.
+- `broadcast_in_dim` whose operand is scalar/length-1 or already the
+  target shape, as an aval-checked passthrough.
+- Graph constants (closed-over arrays), bound automatically to the
+  compiled callable.
+
+A primitive configuration outside this surface falls back to anvl's
+quickr rule; when that rule emits loops or mutation, tccquickr refuses
+with a structured diagnostic naming the construct, so failures state the
+next lowering rule to add rather than miscompiling. Graphs must currently
+have one output leaf and no static arguments.
+
+## Design
+
+The bridge follows anvl's documented extension pattern: `.onLoad`
+registers a `tinycc` interpretation-rule type and attaches rules to
+primitives via `primitive[["tinycc"]] <- rule`. The codegen driver walks
+the graph once with a two-level rule lookup — `tinycc` first, `quickr`
+fallback — so the bridge owns exactly the primitives whose quickr code
+would leave tccquickr's declared subset, and anvl's rule coverage does the
+rest.

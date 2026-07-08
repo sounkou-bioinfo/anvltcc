@@ -1,0 +1,26 @@
+Package: anvltcc
+Title: TinyCC Backend Bridge from 'anvl' Traces to 'tccquickr' Kernels
+Version: 0.0.0.9000
+Authors@R:
+    person("Sounkou Mahamane", "Toure", , "sounkoutoure@gmail.com", role = c("aut", "cre"))
+Description: Compiles 'anvl' traced array programs to C kernels through
+    'tccquickr' and the TinyCC just-in-time compiler from 'Rtinycc'.
+    Traced graphs are lowered to declared R using anvl's own quickr
+    lowering rules wherever those emit tccquickr's declared subset, with
+    bridge-owned tinycc rules for primitives that have a native tccquickr
+    surface form (matrix products as '%*%' contractions, aval-checked
+    broadcast passthrough). The result is a millisecond-latency CPU
+    compile path for anvl programs with no XLA dependency.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Imports:
+    anvl (>= 0.3.0),
+    S7,
+    tccquickr,
+    tengen
+Suggests:
+    Rtinycc,
+    rmarkdown,
+    tinytest

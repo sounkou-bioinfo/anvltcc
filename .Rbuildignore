@@ -1,0 +1,6 @@
+^README\.Rmd$
+^README\.html$
+^Makefile$
+^\.git$
+^.*\.tar\.gz$
+^.*\.Rcheck$

@@ -87,6 +87,13 @@ with a structured diagnostic naming the construct, so failures state the
 next lowering rule to add rather than miscompiling. Graphs must currently
 have one output leaf and no static arguments.
 
+## Benchmarks
+
+See [benchmarks/benchmark.md](benchmarks/benchmark.md) — measured claims
+only: compile latency decomposed by pipeline stage, the fused sigmoid
+chain against base R under both TinyCC and gcc, and the honest matrix
+row where BLAS wins.
+
 ## Design
 
 The bridge follows anvl's documented extension pattern: `.onLoad`

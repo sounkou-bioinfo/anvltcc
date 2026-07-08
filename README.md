@@ -58,7 +58,7 @@ lowered
 #>     anvl_tcc_out <- anvl_tcc_v7
 #>     anvl_tcc_out
 #> }
-#> <environment: 0x5b03b74081e0>
+#> <environment: 0x5df259f5c100>
 #> attr(,"anvltcc_constants")
 #> named list()
 all.equal(as.numeric(lowered(x, w)), as.numeric(1 / (1 + exp(-(x %*% w)))))
@@ -129,6 +129,13 @@ quickr rule; when that rule emits loops or mutation, tccquickr refuses
 with a structured diagnostic naming the construct, so failures state the
 next lowering rule to add rather than miscompiling. Graphs must
 currently have one output leaf and no static arguments.
+
+## Benchmarks
+
+See [benchmarks/benchmark.md](benchmarks/benchmark.md) — measured claims
+only: compile latency decomposed by pipeline stage, the fused sigmoid
+chain against base R under both TinyCC and gcc, and the honest matrix
+row where BLAS wins.
 
 ## Design
 

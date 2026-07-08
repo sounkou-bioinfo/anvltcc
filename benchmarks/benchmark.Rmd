@@ -1,0 +1,193 @@
+---
+output: github_document
+---
+
+<!-- benchmark.md is generated from benchmark.Rmd. Please edit that file -->
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+set.seed(1)
+```
+
+# anvltcc benchmarks
+
+Measured claims only. All numbers are medians over repeated runs on this
+machine at knit time; every table states what each row actually is. Two
+non-claims up front: nobody beats BLAS at large plain matrix products
+(R's `%*%` calls BLAS, the naive nests here do not compete), and TinyCC
+is a non-optimizing compiler, so its code does not generally outrun the
+gcc-compiled loops inside base R — the interesting comparisons are the
+pipeline stages and the fused whole-kernel paths.
+
+```{r helpers}
+library(anvltcc)
+
+median_time <- function(expr, times = 20L) {
+  expr <- substitute(expr)
+  runs <- vapply(seq_len(times), function(i) {
+    t0 <- Sys.time()
+    eval.parent(expr)
+    as.numeric(difftime(Sys.time(), t0, units = "secs"))
+  }, numeric(1))
+  stats::median(runs)
+}
+
+fmt_s <- function(seconds) {
+  if (is.na(seconds)) {
+    "n/a"
+  } else if (seconds < 1e-3) {
+    sprintf("%.0f µs", seconds * 1e6)
+  } else if (seconds < 1) {
+    sprintf("%.1f ms", seconds * 1e3)
+  } else {
+    sprintf("%.2f s", seconds)
+  }
+}
+
+has_quickr <- requireNamespace("quickr", quietly = TRUE)
+```
+
+## Compile latency, decomposed
+
+The workload is a traced sigmoid chain. "Full pipeline" is
+trace + lowering + tccquickr's typed analysis + backend planning + code
+emission (+ compilation for the compiled rows). The tccquickr planning
+stage is measured separately via source-only emission, so the difference
+between the source row and a compiled row is that row's compile-and-load
+step alone.
+
+```{r compile-latency}
+sigmoid_chain <- function(a, x, y) 1 / (1 + anvl::nv_exp(-(a * x + y)))
+
+x <- rnorm(1e6)
+y <- rnorm(1e6)
+
+lower_once <- function() {
+  graph_to_tinycc_r_function(anvl::trace_fn(sigmoid_chain, args = list(
+    a = anvl::nv_scalar(2, backend = "plain"),
+    x = anvl::nv_array(x, backend = "plain"),
+    y = anvl::nv_array(y, backend = "plain")
+  )))
+}
+
+plan_with <- function(lowered, backend, mode) {
+  tccquickr::tccq_plan_backend(
+    S7::prop(tccquickr::tccq_analyze(lowered, strict = TRUE), "value"),
+    backend,
+    tccquickr::tccq_backend_context(mode = mode, target = "c")
+  )
+}
+
+source_pipeline <- median_time(
+  plan_with(lower_once(), tccquickr::tccq_c_backend(), "source"),
+  times = 5L
+)
+tinycc_pipeline <- median_time(
+  plan_with(lower_once(), tccquickr::tccq_rtinycc_backend(), "jit"),
+  times = 5L
+)
+gcc_pipeline <- median_time(
+  plan_with(lower_once(), tccquickr::tccq_c_backend(), "shared_library"),
+  times = 3L
+)
+quickr_pipeline <- if (has_quickr) {
+  median_time({
+    f <- anvl::with_backend(
+      "quickr",
+      anvl::jit(function(a, x, y) 1 / (1 + anvl::nv_exp(-(a * x + y))))
+    )
+    f(
+      anvl::nv_scalar(2, backend = "quickr"),
+      anvl::nv_array(x, backend = "quickr"),
+      anvl::nv_array(y, backend = "quickr")
+    )
+  }, times = 3L)
+} else {
+  NA_real_
+}
+
+knitr::kable(data.frame(
+  pipeline = c(
+    "trace + typed analysis + C emission (no compiler)",
+    "same + TinyCC in-process compile",
+    "same + gcc via R CMD SHLIB",
+    "anvl quickr backend (Fortran toolchain), first call"
+  ),
+  median = c(
+    fmt_s(source_pipeline),
+    fmt_s(tinycc_pipeline),
+    fmt_s(gcc_pipeline),
+    fmt_s(quickr_pipeline)
+  )
+))
+```
+
+The typed analysis dominates the anvltcc pipeline: the three anvltcc
+rows agree within run-to-run noise, which bounds both the TinyCC
+compile-and-bind step and the gcc `R CMD SHLIB` round trip below the
+noise floor of the analysis stage. The optimization target for
+trace-to-callable latency is tccquickr's analysis pass, not the
+compilers.
+
+## Runtime: fused sigmoid chain over 1e6 doubles
+
+Base R evaluates `1 / (1 + exp(-(a * x + y)))` as five vectorized C
+loops with four temporary allocations; the emitted kernel is one fused
+loop. The same C source runs under TinyCC (no optimizer) and gcc
+(`R CMD SHLIB`), which isolates codegen quality from fusion.
+
+```{r runtime-elementwise}
+tinycc_kernel <- S7::prop(
+  S7::prop(plan_with(lower_once(), tccquickr::tccq_rtinycc_backend(), "jit"), "value"),
+  "products"
+)@attrs$callable
+gcc_kernel <- S7::prop(
+  S7::prop(plan_with(lower_once(), tccquickr::tccq_c_backend(), "shared_library"), "value"),
+  "products"
+)@attrs$callable
+
+tinycc_run <- median_time(tinycc_kernel(2, x, y))
+gcc_run <- median_time(gcc_kernel(2, x, y))
+base_r_run <- median_time(1 / (1 + exp(-(2 * x + y))))
+
+knitr::kable(data.frame(
+  implementation = c(
+    "fused kernel, TinyCC",
+    "fused kernel, gcc",
+    "base R (5 loops, 4 temporaries)"
+  ),
+  `median runtime` = c(fmt_s(tinycc_run), fmt_s(gcc_run), fmt_s(base_r_run)),
+  check.names = FALSE
+))
+```
+
+## Runtime: matrix product (the honest row)
+
+A plain `200 x 200` matrix product. R's `%*%` is BLAS; the anvltcc
+kernel is a naive triple loop.
+
+```{r runtime-matmul}
+m <- matrix(rnorm(4e4), 200)
+w <- matrix(rnorm(4e4), 200)
+
+matmul <- function(x, w) anvl::nv_matmul(x, w)
+matmul_kernel <- tinycc_jit(matmul, x = m, w = w)
+
+tinycc_matmul <- median_time(matmul_kernel(m, w))
+blas_matmul <- median_time(m %*% w)
+
+knitr::kable(data.frame(
+  implementation = c("anvltcc kernel (naive nest, TinyCC)", "base R %*% (BLAS)"),
+  `median runtime` = c(fmt_s(tinycc_matmul), fmt_s(blas_matmul)),
+  check.names = FALSE
+))
+```
+
+TinyCC-compiled kernels can bind R's in-process BLAS symbols
+(`R_ext/BLAS.h`, `dgemm_`), so a future contraction implementation can
+call BLAS from inside a fused kernel — one memory pass *and* BLAS
+throughput — once tccquickr's registry grows a `blas` implementation
+target.

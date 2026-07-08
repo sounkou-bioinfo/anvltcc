@@ -4,3 +4,5 @@
 ^\.git$
 ^.*\.tar\.gz$
 ^.*\.Rcheck$
+^benchmarks/benchmark\.Rmd$
+^benchmarks/.*\.html$

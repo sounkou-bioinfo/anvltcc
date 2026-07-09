@@ -125,12 +125,14 @@ knitr::kable(data.frame(
 ))
 ```
 
-The typed analysis dominates the anvltcc pipeline: the three anvltcc
-rows agree within run-to-run noise, which bounds both the TinyCC
-compile-and-bind step and the gcc `R CMD SHLIB` round trip below the
-noise floor of the analysis stage. The optimization target for
-trace-to-callable latency is tccquickr's analysis pass, not the
-compilers.
+The rows decompose: the difference between the first two rows is
+TinyCC's in-process compile-and-bind step (tens of milliseconds), and
+the difference between the first and third is a gcc `R CMD SHLIB` round
+trip. An earlier revision of this table measured ~1.5 s for every
+anvltcc row — profiling attributed 91% of that to per-query trait
+re-assertion and linear registry scans in tccquickr's call resolution,
+which tccquickr has since fixed (18x) by asserting traits once at the
+registry constructor boundary and resolving through an op-name index.
 
 ## Runtime: fused sigmoid chain over 1e6 doubles
 

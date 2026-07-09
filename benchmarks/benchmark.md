@@ -116,17 +116,19 @@ knitr::kable(data.frame(
 
 | pipeline                                            | median   |
 |:----------------------------------------------------|:---------|
-| trace + typed analysis + C emission (no compiler)   | 1.52 s   |
-| same + TinyCC in-process compile                    | 1.42 s   |
-| same + gcc via R CMD SHLIB                          | 1.62 s   |
-| anvl quickr backend (Fortran toolchain), first call | 490.3 ms |
+| trace + typed analysis + C emission (no compiler)   | 66.9 ms  |
+| same + TinyCC in-process compile                    | 82.0 ms  |
+| same + gcc via R CMD SHLIB                          | 311.6 ms |
+| anvl quickr backend (Fortran toolchain), first call | 471.3 ms |
 
-The typed analysis dominates the anvltcc pipeline: the three anvltcc
-rows agree within run-to-run noise, which bounds both the TinyCC
-compile-and-bind step and the gcc `R CMD SHLIB` round trip below the
-noise floor of the analysis stage. The optimization target for
-trace-to-callable latency is tccquickr’s analysis pass, not the
-compilers.
+The rows decompose: the difference between the first two rows is
+TinyCC’s in-process compile-and-bind step (tens of milliseconds), and
+the difference between the first and third is a gcc `R CMD SHLIB` round
+trip. An earlier revision of this table measured ~1.5 s for every
+anvltcc row — profiling attributed 91% of that to per-query trait
+re-assertion and linear registry scans in tccquickr’s call resolution,
+which tccquickr has since fixed (18x) by asserting traits once at the
+registry constructor boundary and resolving through an op-name index.
 
 ## Runtime: fused sigmoid chain over 1e6 doubles
 
@@ -162,9 +164,9 @@ knitr::kable(data.frame(
 
 | implementation                  | median runtime |
 |:--------------------------------|:---------------|
-| fused kernel, TinyCC            | 19.1 ms        |
-| fused kernel, gcc               | 5.9 ms         |
-| base R (5 loops, 4 temporaries) | 9.5 ms         |
+| fused kernel, TinyCC            | 19.6 ms        |
+| fused kernel, gcc               | 5.8 ms         |
+| base R (5 loops, 4 temporaries) | 9.7 ms         |
 
 ## Runtime: matrix product (the honest row)
 
@@ -190,8 +192,8 @@ knitr::kable(data.frame(
 
 | implementation                      | median runtime |
 |:------------------------------------|:---------------|
-| anvltcc kernel (naive nest, TinyCC) | 14.4 ms        |
-| base R %\*% (BLAS)                  | 777 µs         |
+| anvltcc kernel (naive nest, TinyCC) | 14.9 ms        |
+| base R %\*% (BLAS)                  | 646 µs         |
 
 TinyCC-compiled kernels can bind R’s in-process BLAS symbols
 (`R_ext/BLAS.h`, `dgemm_`), so a future contraction implementation can

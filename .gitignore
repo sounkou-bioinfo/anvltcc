@@ -2,3 +2,4 @@
 *.Rcheck
 README.html
 .Rhistory
+/.pi/

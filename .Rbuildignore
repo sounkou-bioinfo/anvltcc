@@ -2,6 +2,7 @@
 ^README\.html$
 ^Makefile$
 ^\.git$
+^\.pi$
 ^.*\.tar\.gz$
 ^.*\.Rcheck$
 ^benchmarks/benchmark\.Rmd$

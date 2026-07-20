@@ -24,3 +24,5 @@ Suggests:
     Rtinycc,
     rmarkdown,
     tinytest
+Additional_repositories: https://r-xla.r-universe.dev,
+    https://sounkou-bioinfo.r-universe.dev

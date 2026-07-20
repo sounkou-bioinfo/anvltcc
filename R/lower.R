@@ -70,17 +70,30 @@ graph_to_tinycc_r_function <- function(graph) {
     )
     out_syms <- vector("list", length(graph_call$outputs))
     out_avals <- vector("list", length(graph_call$outputs))
+    inline_literal <- identical(graph_call$primitive$name, "broadcast_in_dim") &&
+      length(graph_call$inputs) == 1L &&
+      ns$is_graph_literal(graph_call$inputs[[1L]])
     for (i in seq_along(graph_call$outputs)) {
       out_node <- graph_call$outputs[[i]]
       if (!ns$is_graph_value(out_node)) {
         stop("anvltcc: non-GraphValue primitive outputs are unsupported.", call. = FALSE)
       }
+      out_avals[[i]] <- out_node$aval
+      if (inline_literal) {
+        # Keep scalar graph literals as expression leaves. Binding the
+        # broadcast result to a local makes tccquickr model the literal as
+        # materialized storage, which its storage contract rejects.
+        node_expr[[out_node]] <- input_exprs[[1L]]
+        next
+      }
       sym <- new_tmp_sym()
       node_expr[[out_node]] <- sym
       out_syms[[i]] <- sym
-      out_avals[[i]] <- out_node$aval
     }
 
+    if (inline_literal) {
+      next
+    }
     lower_call <- function(rule) {
       rule(
         graph_call$primitive$name,
